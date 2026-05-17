@@ -8,6 +8,7 @@ export function useAppState({ t, locale }) {
   const [password, setPassword] = useState("");
   const [country, setCountry] = useState("中国 China");
   const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [user, setUser] = useState(null);
@@ -27,6 +28,7 @@ export function useAppState({ t, locale }) {
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
   const [messageTranslations, setMessageTranslations] = useState({});
+  const [sendingMessage, setSendingMessage] = useState(false);
   const authDeferredNonce = useRef(0);
 
   const currentProfileCountry = profile?.country || country;
@@ -94,27 +96,29 @@ export function useAppState({ t, locale }) {
   useEffect(() => {
     let cancelled = false;
 
+    void (async () => {
+      const { data, error } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (error) {
+        setAuthReady(true);
+        return;
+      }
+
+      const authSession = data.session ?? null;
+      setSession(authSession);
+      setUser(authSession?.user ?? null);
+      setAuthReady(true);
+    })();
+
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, authSession) => {
         if (cancelled) return;
         setSession(authSession ?? null);
         const currentUser = authSession?.user ?? null;
         setUser(currentUser);
+        setAuthReady(true);
 
-        if (currentUser) {
-          const accessToken = authSession?.access_token;
-          const nonce = ++authDeferredNonce.current;
-          setTimeout(() => {
-            void (async () => {
-              if (cancelled || nonce !== authDeferredNonce.current) return;
-              await fetchProfile(currentUser);
-              if (cancelled || nonce !== authDeferredNonce.current) return;
-              await fetchDiscoverProfiles(currentUser, accessToken);
-              if (cancelled || nonce !== authDeferredNonce.current) return;
-              await fetchMatches(currentUser, accessToken);
-            })();
-          }, 0);
-        } else {
+        if (!currentUser) {
           authDeferredNonce.current += 1;
           setProfile(null);
           setDiscoverProfiles([]);
@@ -130,6 +134,28 @@ export function useAppState({ t, locale }) {
       listener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!selectedMatch) return;
+
+    const refreshedMatch = matches.find((match) => match.id === selectedMatch.id);
+    if (!refreshedMatch || refreshedMatch === selectedMatch) return;
+
+    setSelectedMatch(refreshedMatch);
+  }, [matches, selectedMatch]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const nonce = ++authDeferredNonce.current;
+    void (async () => {
+      await fetchProfile(user);
+      if (nonce !== authDeferredNonce.current) return;
+      await fetchDiscoverProfiles(user);
+      if (nonce !== authDeferredNonce.current) return;
+      await fetchMatches(user);
+    })();
+  }, [user]);
 
   async function fetchProfile(currentUser) {
     const { data, error } = await supabase
@@ -508,7 +534,13 @@ export function useAppState({ t, locale }) {
   async function fetchMessages(match) {
     if (!session) return;
 
-    setSelectedMatch(match);
+    const latestMatch =
+      matches.find((item) => item.id === match.id) ?? {
+        ...match,
+        peer_profile: match.peer_profile ?? null,
+      };
+
+    setSelectedMatch(latestMatch);
     startTransition(() => {
       setMessages([]);
       setMessageTranslations({});
@@ -540,7 +572,7 @@ export function useAppState({ t, locale }) {
       return;
     }
 
-    if (!messageText.trim()) return;
+    if (!messageText.trim() || sendingMessage) return;
 
     const payload = {
       match_id: selectedMatch.id,
@@ -552,25 +584,31 @@ export function useAppState({ t, locale }) {
     const projectUrl = supabase.supabaseUrl;
     const accessToken = session.access_token;
 
-    const response = await fetch(`${projectUrl}/rest/v1/messages`, {
-      method: "POST",
-      headers: {
-        apikey: apiKey,
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        Prefer: "return=representation",
-      },
-      body: JSON.stringify(payload),
-    });
+    setSendingMessage(true);
 
-    const text = await response.text();
-    if (!response.ok) {
-      alert(t("alert_send_fail") + text);
-      return;
+    try {
+      const response = await fetch(`${projectUrl}/rest/v1/messages`, {
+        method: "POST",
+        headers: {
+          apikey: apiKey,
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        alert(t("alert_send_fail") + text);
+        return;
+      }
+
+      setMessageText("");
+      await fetchMessages(selectedMatch);
+    } finally {
+      setSendingMessage(false);
     }
-
-    setMessageText("");
-    await fetchMessages(selectedMatch);
   }
 
   return {
@@ -583,6 +621,7 @@ export function useAppState({ t, locale }) {
     country,
     setCountry,
     session,
+    authReady,
     authLoading,
     authMessage,
     user,
@@ -609,6 +648,7 @@ export function useAppState({ t, locale }) {
     messageText,
     setMessageText,
     messageTranslations,
+    sendingMessage,
     profiles,
     translationTargetLang,
     handleAuthSubmit,

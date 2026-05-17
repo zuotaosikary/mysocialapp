@@ -5,6 +5,7 @@ export default function ProfilePage() {
   const { t } = useI18n();
   const {
     user,
+    authReady,
     profile,
     nickname,
     setNickname,
@@ -38,7 +39,19 @@ export default function ProfilePage() {
           )}
         </div>
 
-        {!user ? (
+        {!authReady ? (
+          <div className="grid lg:grid-cols-[240px,1fr] gap-8 animate-pulse">
+            <div className="space-y-4">
+              <div className="rounded-[28px] border border-white/10 bg-black/30 p-4 h-[320px]" />
+            </div>
+            <div className="space-y-4">
+              <div className="rounded-2xl bg-black/30 border border-white/10 h-14" />
+              <div className="rounded-2xl bg-black/30 border border-white/10 h-14" />
+              <div className="rounded-2xl bg-black/30 border border-white/10 h-14" />
+              <div className="rounded-2xl bg-black/30 border border-white/10 h-36" />
+            </div>
+          </div>
+        ) : !user ? (
           <div className="rounded-3xl border border-white/10 bg-black/30 p-6 text-gray-300">
             {t("profile_login_hint")}
           </div>
